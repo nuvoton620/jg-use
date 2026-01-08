@@ -82,7 +82,7 @@
             const [showOverdueModal, setShowOverdueModal] = useState(false);
             const [toastMsg, setToastMsg] = useState('');
 
-            // 歷史篩選
+            // 歷史區間篩選
             const [startDate, setStartDate] = useState('');
             const [endDate, setEndDate] = useState('');
 
@@ -96,12 +96,7 @@
             const html5QrCodeRef = useRef(null);
 
             useEffect(() => {
-                const initAuth = async () => {
-                    try {
-                        await auth.signInAnonymously();
-                    } catch (err) { console.error("Auth Error", err); }
-                };
-                initAuth();
+                auth.signInAnonymously().catch(err => console.error("Auth Error", err));
                 const unsubscribe = auth.onAuthStateChanged((u) => setUser(u));
                 return () => unsubscribe();
             }, []);
@@ -113,7 +108,7 @@
                     const dbData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setRecords(dbData.sort((a, b) => new Date(b.date) - new Date(a.date)));
                     setLoading(false);
-                }, (err) => console.error("Firestore error", err));
+                });
                 return () => unsubscribe();
             }, [user]);
 
@@ -331,11 +326,9 @@
                     
                     {/* Toast 提示 */}
                     {toastMsg && (
-                        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] bg-slate-800/95 backdrop-blur-sm text-white px-6 py-4 rounded-3xl text-sm font-black shadow-2xl animate-toast flex flex-col items-center gap-2 min-w-[280px]">
-                            <div className="flex items-center gap-2">
-                                <i data-lucide="check-circle-2" className="w-5 h-5 text-green-400"></i>
-                                <span>{toastMsg}</span>
-                            </div>
+                        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] bg-slate-800/95 backdrop-blur-sm text-white px-6 py-4 rounded-3xl text-sm font-black shadow-2xl animate-toast flex items-center justify-center gap-2 min-w-[280px]">
+                            <i data-lucide="check-circle-2" className="w-5 h-5 text-green-400"></i>
+                            <span>{toastMsg}</span>
                         </div>
                     )}
 
@@ -425,7 +418,7 @@
                         {activeTab === 'checkout' && (
                             <div className="space-y-4 animate-in fade-in duration-300">
                                 <div className="bg-white p-4 sm:p-6 rounded-[2rem] shadow-sm border border-slate-200">
-                                    <label className="text-slate-400 font-black text-[10px] uppercase mb-2 block tracking-widest">領用人姓名</label>
+                                    <label className="text-slate-400 font-black text-[10px] uppercase mb-2 block tracking-widest text-center">領用人姓名</label>
                                     <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-4 text-lg font-bold outline-none focus:border-blue-600 mb-8 transition-all" placeholder="輸入姓名" value={formData.user} onChange={(e) => setFormData({...formData, user: e.target.value})} />
                                     
                                     <div className="flex justify-between items-center mb-4 px-1">
@@ -434,8 +427,8 @@
                                     </div>
                                     <div className="h-6 mb-1">{inputError && <p className="text-rose-500 text-[10px] font-black flex items-center gap-1 animate-pulse"><i data-lucide="alert-triangle" className="w-3 h-3"></i> {inputError}</p>}</div>
                                     
-                                    {/* 修正後的輸入框列：使用 min-w-0 並減少 padding 確保 + 號不超出 */}
-                                    <div className="flex items-center gap-2 mb-8 px-1">
+                                    {/* 修正後的輸入框列：使用 flex 佈局並固定 + 號寬度 */}
+                                    <div className="flex items-center gap-2 mb-8 px-1 overflow-hidden">
                                         <input 
                                             type="text" 
                                             className={`flex-1 min-w-0 bg-slate-50 border-2 rounded-2xl px-4 py-3 text-sm font-bold outline-none transition-all ${inputError ? 'border-rose-500 bg-rose-50' : 'border-slate-100 focus:border-blue-600'}`} 
@@ -446,7 +439,7 @@
                                         />
                                         <button 
                                             onClick={() => addSocketToTemp(formData.itemInput)} 
-                                            className="w-11 h-11 bg-slate-900 text-white rounded-xl flex-shrink-0 flex items-center justify-center font-bold text-2xl shadow-md transition-all active:scale-90"
+                                            className="w-11 h-11 bg-slate-900 text-white rounded-xl flex-none flex items-center justify-center font-bold text-2xl shadow-md transition-all active:scale-90"
                                         >+</button>
                                     </div>
 
@@ -470,9 +463,27 @@
                                 <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border-t-8 border-emerald-500 border border-slate-200">
                                     <div className="flex justify-between items-center mb-6">
                                         <h3 className="text-xl font-black text-emerald-800">歸還中心</h3>
-                                        <button onClick={() => startScanner('return')} className="p-3 bg-emerald-600 text-white rounded-2xl shadow-lg active:scale-95"><i data-lucide="qr-code" className="w-5 h-5"></i></button>
+                                        
+                                        {/* 優化：將掃描與歸還鍵放在一起 */}
+                                        <div className="flex gap-2">
+                                            <button onClick={() => startScanner('return')} className="p-3 bg-slate-900 text-white rounded-xl shadow-lg active:scale-95 flex items-center gap-1">
+                                                <i data-lucide="qr-code" className="w-4 h-4"></i>
+                                            </button>
+                                            <button 
+                                                disabled={selectedItemsToReturn.length === 0} 
+                                                onClick={() => setShowReturnModal(true)} 
+                                                className={`px-4 py-2 rounded-xl font-black text-xs shadow-lg flex items-center gap-2 transition-all active:scale-95 ${selectedItemsToReturn.length > 0 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-300'}`}
+                                            >
+                                                <i data-lucide="package-check" className="w-4 h-4"></i> 執行歸還 ({selectedItemsToReturn.length})
+                                            </button>
+                                        </div>
                                     </div>
-                                    <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-4 font-bold outline-none focus:border-emerald-600 mb-6 transition-all" placeholder="搜尋人名或編號..." value={returnSearchQuery} onChange={(e) => setReturnSearchQuery(e.target.value)} />
+                                    
+                                    <div className="relative mb-6">
+                                        <i data-lucide="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 w-4 h-4"></i>
+                                        <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-11 pr-4 py-4 font-bold outline-none focus:border-emerald-600 transition-all" placeholder="搜尋人名或編號..." value={returnSearchQuery} onChange={(e) => setReturnSearchQuery(e.target.value)} />
+                                    </div>
+
                                     <div className="space-y-4 min-h-[200px] no-scrollbar">
                                         {activeRecords.filter(r => (r.user.includes(returnSearchQuery) || r.items.some(i => i.includes(returnSearchQuery))) && filterTestData(r)).map(rec => (
                                             <div key={rec.id} className="rounded-2xl border-2 p-4 border-slate-100 bg-white shadow-sm">
@@ -497,8 +508,10 @@
                                                 </div>
                                             </div>
                                         ))}
+                                        {activeRecords.length > 0 && activeRecords.filter(r => (r.user.includes(returnSearchQuery) || r.items.some(i => i.includes(returnSearchQuery)))).length === 0 && (
+                                            <div className="text-center py-10 text-slate-300 font-black italic">找不到相符的人員或 Socket</div>
+                                        )}
                                     </div>
-                                    <button disabled={selectedItemsToReturn.length === 0} onClick={() => setShowReturnModal(true)} className="w-full py-5 bg-emerald-600 text-white rounded-2xl font-black text-lg shadow-xl mt-6">執行歸還 ({selectedItemsToReturn.length})</button>
                                 </div>
                             </div>
                         )}
@@ -544,7 +557,7 @@
                             <div className="space-y-4 pb-20 animate-in fade-in duration-300">
                                 <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 space-y-4">
                                     <div className="relative">
-                                        <i data-lucide="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
+                                        <i data-lucide="search" className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300"></i>
                                         <input type="text" className="w-full pl-11 pr-4 py-3 rounded-2xl border-2 border-slate-100 outline-none focus:border-blue-500 font-bold text-sm shadow-inner transition-all" placeholder="搜尋姓名或編號..." value={historySearchTerm} onChange={e => setHistorySearchTerm(e.target.value)} />
                                     </div>
                                     <div className="space-y-2">
@@ -596,7 +609,7 @@
                             <div className="flex flex-col"><span className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-tight">使用中</span><span className="text-xl font-black text-blue-700 leading-none">{activeRecords.length}</span></div>
                             <div className="flex flex-col"><span className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-tight">逾期</span><span className={`text-xl font-black leading-none ${overdueCount > 0 ? 'text-rose-600' : 'text-slate-200'}`}>{overdueCount}</span></div>
                         </div>
-                        <div className="text-[8px] font-black text-slate-300 italic tracking-widest uppercase">Socket Final V7.8</div>
+                        <div className="text-[8px] font-black text-slate-300 italic tracking-widest uppercase">Socket Final V7.9</div>
                     </footer>
                 </div>
             );
