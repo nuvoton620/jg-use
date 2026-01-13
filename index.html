@@ -36,8 +36,26 @@
             -webkit-appearance: none;
             min-height: 52px;
         }
-        /* 防止 Lucide 替換圖示時造成 React 節點丟失 */
         .icon-wrapper { display: inline-flex; align-items: center; justify-content: center; }
+
+        /* 左右彈跳跑馬燈動畫樣式 */
+        @keyframes marquee-bounce {
+            0% { transform: translateX(20%); }
+            100% { transform: translateX(-20%); }
+        }
+        .marquee-box {
+            overflow: hidden;
+            white-space: nowrap;
+            width: 100%;
+            display: flex;
+            align-items: center;
+        }
+        .marquee-text {
+            display: inline-block;
+            /* 使用 alternate 實現左右來回彈跳跑，速度調快一點點增加律動感 */
+            animation: marquee-bounce 6s ease-in-out infinite alternate;
+            padding: 0 10px;
+        }
     </style>
 </head>
 <body>
@@ -61,6 +79,18 @@
         const auth = firebase.auth();
         const db = firebase.firestore();
         const appId = "socket-management-21bf2";
+
+        // 自定義穩定的勾選圖示組件
+        const CheckIcon = ({ selected, color = "emerald" }) => {
+            if (selected) {
+                return (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={`text-${color}-600`}>
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                );
+            }
+            return <div className="w-[22px] h-[22px] border-2 border-slate-200 rounded-md bg-white"></div>;
+        };
 
         const App = () => {
             const [user, setUser] = useState(null);
@@ -117,7 +147,6 @@
                 return () => unsubscribe();
             }, [user]);
 
-            // 圖示渲染
             useEffect(() => {
                 const timer = setTimeout(() => {
                     if (window.lucide) {
@@ -131,7 +160,6 @@
             
             const activeRecords = useMemo(() => records.filter(r => r.status === 'Checked Out'), [records]);
             
-            // 統計數據
             const usagePeopleCount = activeRecords.length;
             const overduePeopleCount = useMemo(() => activeRecords.filter(r => isOverdue(r.date)).length, [activeRecords]);
             const totalItemsLent = useMemo(() => activeRecords.reduce((acc, rec) => acc + (rec.items?.length || 0), 0), [activeRecords]);
@@ -150,7 +178,7 @@
 
             const filteredHistoryRecords = useMemo(() => {
                 return records.filter(r => {
-                    const term = historySearchTerm.toUpperCase(); // 搜尋比對轉換大寫
+                    const term = historySearchTerm.toUpperCase();
                     const matchesSearch = r.user?.toUpperCase().includes(term) || r.items?.some(i => i.toUpperCase().includes(term));
                     const recordDate = new Date(r.date);
                     const start = startDate ? new Date(startDate) : null;
@@ -213,6 +241,7 @@
             };
 
             const executeReturn = async () => {
+                if (selectedItemsToReturn.length === 0) return;
                 const groups = {};
                 selectedItemsToReturn.forEach(key => {
                     const [rid, val] = key.split('|');
@@ -350,7 +379,7 @@
                                     <p className="text-lg font-black text-slate-600 leading-snug">嗨 {formData.user}，您的 Socket 流浪太久了，<br/><span className="text-rose-600 font-black underline decoration-2 decoration-rose-200">記得歸還</span>喔！</p>
                                 </div>
                                 <div className="flex flex-col gap-2 pt-2">
-                                    <button onClick={() => { setShowOverdueModal(false); setActiveTab('return'); setReturnSearchQuery(formData.user); }} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black shadow-lg text-xl active:scale-95 transition-transform">好，先去歸還</button>
+                                    <button onClick={() => { setShowOverdueModal(false); setActiveTab('return'); setReturnSearchQuery(formData.user.toUpperCase()); }} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black shadow-lg text-xl active:scale-95 transition-transform">好，先去歸還</button>
                                     <button onClick={executeCheckout} className="text-slate-400 font-bold text-xs underline decoration-dotted py-2">仍要領用</button>
                                 </div>
                             </div>
@@ -438,9 +467,15 @@
                         {activeTab === 'return' && (
                             <div className="space-y-4 animate-in fade-in duration-300 pb-10">
                                 <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border-t-8 border-emerald-500 border border-slate-200">
-                                    <div className="flex justify-between items-center mb-6">
-                                        <h3 className="text-2xl font-black text-emerald-800">歸還中心</h3>
-                                        <div className="flex gap-2">
+                                    <div className="flex flex-col gap-4 mb-6">
+                                        {/* 修正：實現來回彈跳模式的跑馬燈提醒語區域 */}
+                                        <div className="marquee-box bg-rose-50 rounded-xl py-2.5 border border-rose-100">
+                                            <div className="marquee-text text-[12px] font-black text-rose-600">
+                                                ⚠️ 溫馨提醒：歸還請務必放置於歸還箱，感謝您的配合～
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="flex justify-end gap-2 shrink-0">
                                             <button onClick={() => startScanner('return')} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl shadow-lg text-sm font-black flex items-center gap-1.5 active:scale-95 transition-all">
                                                 <span className="icon-wrapper"><i data-lucide="qr-code" className="w-5 h-5"></i></span> 掃描
                                             </button>
@@ -449,6 +484,7 @@
                                             </button>
                                         </div>
                                     </div>
+                                    
                                     <div className="relative mb-6">
                                         <span className="icon-wrapper absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"><i data-lucide="search" className="w-5 h-5"></i></span>
                                         <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-5 text-base font-bold outline-none focus:border-emerald-600 transition-all uppercase" placeholder="搜尋人名或編號..." value={returnSearchQuery} onChange={(e) => setReturnSearchQuery(e.target.value.toUpperCase())} />
@@ -471,7 +507,14 @@
                                                     <div className="grid grid-cols-1 gap-2.5">
                                                         {rec.items.map(item => {
                                                             const key = `${rec.id}|${item}`; const sel = selectedItemsToReturn.includes(key);
-                                                            return <div key={item} onClick={() => setSelectedItemsToReturn(sel ? selectedItemsToReturn.filter(k => k !== key) : [...selectedItemsToReturn, key])} className={`px-5 py-4 rounded-2xl border flex justify-between items-center cursor-pointer transition-all ${sel ? 'bg-emerald-50 border-emerald-300 shadow-inner' : 'bg-white border-slate-100'}`}><span className="font-mono text-base font-bold text-slate-600 uppercase">{item}</span><span>{sel ? <span className="icon-wrapper"><i data-lucide="check-square" className="text-emerald-600"></i></span> : <span className="icon-wrapper"><i data-lucide="square" className="text-slate-200"></i></span>}</span></div>;
+                                                            return (
+                                                                <div key={item} onClick={() => setSelectedItemsToReturn(sel ? selectedItemsToReturn.filter(k => k !== key) : [...selectedItemsToReturn, key])} className={`px-5 py-4 rounded-2xl border flex justify-between items-center cursor-pointer transition-all ${sel ? 'bg-emerald-50 border-emerald-300 shadow-inner' : 'bg-white border-slate-100'}`}>
+                                                                    <span className="font-mono text-base font-bold text-slate-600 uppercase">{item}</span>
+                                                                    <span className="icon-wrapper">
+                                                                        <CheckIcon selected={sel} />
+                                                                    </span>
+                                                                </div>
+                                                            );
                                                         })}
                                                     </div>
                                                 </div>
@@ -525,7 +568,6 @@
                                 <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-200 space-y-5">
                                     <div className="relative">
                                         <span className="icon-wrapper absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"><i data-lucide="search" className="w-5 h-5"></i></span>
-                                        {/* 修正：歷史紀錄搜尋輸入框自動轉換為大寫 */}
                                         <input type="text" className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-slate-100 outline-none focus:border-blue-500 font-bold text-base shadow-inner transition-all uppercase" placeholder="搜尋姓名或編號..." value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value.toUpperCase())} />
                                     </div>
                                     <div className="space-y-4">
@@ -606,7 +648,7 @@
                             <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase tracking-tighter leading-tight text-rose-600">逾期數量</span><span className={`text-xl font-black leading-none ${overdueItemsCount > 0 ? 'text-rose-600' : 'text-slate-700'}`}>{overdueItemsCount}</span></div>
                             <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase tracking-tighter leading-tight text-blue-700">使用人員</span><span className="text-xl font-black text-blue-700 leading-none">{usagePeopleCount}</span></div>
                         </div>
-                        <div className="text-[9px] font-black text-slate-300 italic tracking-tighter uppercase text-right leading-tight">Socket<br/>V11.8 Final</div>
+                        <div className="text-[9px] font-black text-slate-300 italic tracking-tighter uppercase text-right leading-tight">Socket<br/>V12.5 Final</div>
                     </footer>
                 </div>
             );
