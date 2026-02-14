@@ -38,7 +38,7 @@
         }
         .icon-wrapper { display: inline-flex; align-items: center; justify-content: center; }
 
-        /* 左右彈跳跑馬燈動畫樣式 */
+        /* 左右彈跳跑馬燈 */
         @keyframes marquee-bounce {
             0% { transform: translateX(20%); }
             100% { transform: translateX(-20%); }
@@ -52,8 +52,7 @@
         }
         .marquee-text {
             display: inline-block;
-            /* 使用 alternate 實現左右來回彈跳跑，速度調快一點點增加律動感 */
-            animation: marquee-bounce 6s ease-in-out infinite alternate;
+            animation: marquee-bounce 10s ease-in-out infinite alternate;
             padding: 0 10px;
         }
     </style>
@@ -80,7 +79,7 @@
         const db = firebase.firestore();
         const appId = "socket-management-21bf2";
 
-        // 自定義穩定的勾選圖示組件
+        // 穩定的勾選圖示
         const CheckIcon = ({ selected, color = "emerald" }) => {
             if (selected) {
                 return (
@@ -100,6 +99,11 @@
             const [records, setRecords] = useState([]);
             const [loading, setLoading] = useState(true);
 
+            // 管理員權限與視圖切換
+            const [isAdminMode, setIsAdminMode] = useState(false);
+            const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+            const [adminInputPassword, setAdminInputPassword] = useState('');
+
             // UI 狀態
             const [showScanner, setShowScanner] = useState(false);
             const [scannerTarget, setScannerTarget] = useState('checkout'); 
@@ -108,9 +112,13 @@
             const [endDate, setEndDate] = useState('');
             const [showOnlyOverdue, setShowOnlyOverdue] = useState(false);
 
-            const [showOverdueModal, setShowOverdueModal] = useState(false);
-            const [returnSearchQuery, setReturnSearchQuery] = useState(''); 
-            const [selectedItemsToReturn, setSelectedItemsToReturn] = useState([]); 
+            // 領出成功彈窗 (顯示歸還碼)
+            const [checkoutSuccessCode, setCheckoutSuccessCode] = useState(null);
+
+            // 歸還驗證彈窗
+            const [isVerifyReturnOpen, setIsVerifyReturnOpen] = useState(false);
+            const [returnVerifyCode, setReturnVerifyCode] = useState('');
+            const [verifyError, setVerifyError] = useState(false);
 
             // 刪除驗證邏輯
             const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -119,8 +127,12 @@
             const [passwordError, setPasswordError] = useState(false);
             const [toastMsg, setToastMsg] = useState('');
 
+            const [showOverdueModal, setShowOverdueModal] = useState(false);
+            const [returnSearchQuery, setReturnSearchQuery] = useState(''); 
+            const [selectedItemsToReturn, setSelectedItemsToReturn] = useState([]); 
+
             // 領出表單狀態
-            const [formData, setFormData] = useState({ user: '', itemInput: '' });
+            const [formData, setFormData] = useState({ user: '', empId: '', itemInput: '' });
             const [tempItems, setTempItems] = useState([]);
             const [inputError, setInputError] = useState('');
 
@@ -128,6 +140,14 @@
             const [selectedHistoryIds, setSelectedHistoryIds] = useState([]);
             
             const html5QrCodeRef = useRef(null);
+
+            // 遮罩工號功能 (顯示後2位)
+            const maskEmpId = (id) => {
+                if (!id) return '';
+                const str = String(id);
+                if (str.length <= 2) return str;
+                return "X".repeat(str.length - 2) + str.slice(-2);
+            };
 
             useEffect(() => {
                 auth.signInAnonymously().catch(err => console.error("認證失敗", err));
@@ -154,12 +174,12 @@
                     }
                 }, 100);
                 return () => clearTimeout(timer);
-            }, [activeTab, showScanner, records, isPageLocked, toastMsg, showOverdueModal, tempItems, selectedHistoryIds]);
+            }, [activeTab, showScanner, records, isPageLocked, toastMsg, showOverdueModal, tempItems, selectedHistoryIds, checkoutSuccessCode, isVerifyReturnOpen, isAdminMode, isAdminModalOpen]);
 
             const isOverdue = (dateString) => Math.ceil(Math.abs(new Date() - new Date(dateString)) / (1000 * 60 * 60 * 24)) > 3;
-            
             const activeRecords = useMemo(() => records.filter(r => r.status === 'Checked Out'), [records]);
             
+            // 統計數據
             const usagePeopleCount = activeRecords.length;
             const overduePeopleCount = useMemo(() => activeRecords.filter(r => isOverdue(r.date)).length, [activeRecords]);
             const totalItemsLent = useMemo(() => activeRecords.reduce((acc, rec) => acc + (rec.items?.length || 0), 0), [activeRecords]);
@@ -179,7 +199,7 @@
             const filteredHistoryRecords = useMemo(() => {
                 return records.filter(r => {
                     const term = historySearchTerm.toUpperCase();
-                    const matchesSearch = r.user?.toUpperCase().includes(term) || r.items?.some(i => i.toUpperCase().includes(term));
+                    const matchesSearch = r.user?.toUpperCase().includes(term) || (r.empId || '').toUpperCase().includes(term) || r.items?.some(i => i.toUpperCase().includes(term));
                     const recordDate = new Date(r.date);
                     const start = startDate ? new Date(startDate) : null;
                     const end = endDate ? new Date(endDate) : null;
@@ -211,6 +231,18 @@
                 else { setPasswordError(true); setTimeout(() => setPasswordError(false), 1000); }
             };
 
+            const handleAdminLogin = () => {
+                if (adminInputPassword === '168168') {
+                    setIsAdminMode(true);
+                    setIsAdminModalOpen(false);
+                    setAdminInputPassword('');
+                    showToast('管理員視圖已啟動');
+                } else {
+                    setPasswordError(true);
+                    setTimeout(() => setPasswordError(false), 1000);
+                }
+            };
+
             const addSocketToTemp = (code) => {
                 const socketId = code.trim().toUpperCase();
                 if (!socketId) return;
@@ -223,7 +255,7 @@
             };
 
             const handleCheckoutClick = () => {
-                if (tempItems.length === 0 || !formData.user) return;
+                if (tempItems.length === 0 || !formData.user || !formData.empId) return;
                 const userOverdue = records.filter(r => r.user.trim() === formData.user.trim() && r.status === 'Checked Out' && isOverdue(r.date));
                 if (userOverdue.length > 0) { setShowOverdueModal(true); return; }
                 executeCheckout();
@@ -231,38 +263,73 @@
 
             const executeCheckout = async () => {
                 setShowOverdueModal(false);
+                
+                // 修正：生成不含「4」的 4 位數歸還碼
+                const allowedDigits = '012356789';
+                let returnCode = '';
+                for (let i = 0; i < 4; i++) {
+                    returnCode += allowedDigits.charAt(Math.floor(Math.random() * allowedDigits.length));
+                }
+
                 try {
                     await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('records').add({
-                        user: formData.user, items: [...tempItems], date: new Date().toISOString(), status: 'Checked Out', createdAt: Date.now()
+                        user: formData.user,
+                        empId: formData.empId,
+                        returnCode: returnCode,
+                        items: [...tempItems],
+                        date: new Date().toISOString(),
+                        status: 'Checked Out',
+                        createdAt: Date.now()
                     });
-                    setFormData({ user: '', itemInput: '' }); setTempItems([]); setActiveTab('in_use');
-                    showToast('領用登記完成');
+                    setCheckoutSuccessCode(returnCode);
+                    setFormData({ user: '', empId: '', itemInput: '' }); 
+                    setTempItems([]);
                 } catch (err) { console.error(err); }
             };
 
-            const executeReturn = async () => {
+            const handleReturnClick = () => {
                 if (selectedItemsToReturn.length === 0) return;
+                setIsVerifyReturnOpen(true);
+            };
+
+            const executeReturnVerify = async () => {
                 const groups = {};
                 selectedItemsToReturn.forEach(key => {
                     const [rid, val] = key.split('|');
                     if (!groups[rid]) groups[rid] = [];
                     groups[rid].push(val);
                 });
+
+                const firstRecordId = Object.keys(groups)[0];
+                const original = records.find(r => r.id === firstRecordId);
+
+                if (returnVerifyCode !== original.returnCode) {
+                    setVerifyError(true);
+                    setTimeout(() => setVerifyError(false), 1500);
+                    return;
+                }
+
                 try {
                     for (const rid in groups) {
                         const selected = groups[rid];
-                        const original = records.find(r => r.id === rid);
-                        const remaining = original.items.filter(i => !selected.includes(i));
+                        const rec = records.find(r => r.id === rid);
+                        const remaining = rec.items.filter(i => !selected.includes(i));
                         const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('records').doc(rid);
-                        if (remaining.length === 0) await docRef.update({ status: 'Returned', returnDate: new Date().toISOString() });
-                        else {
+                        
+                        if (remaining.length === 0) {
+                            await docRef.update({ status: 'Returned', returnDate: new Date().toISOString() });
+                        } else {
                             await docRef.update({ items: remaining });
                             await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('records').add({
-                                user: original.user, items: selected, date: original.date, status: 'Returned', returnDate: new Date().toISOString(), createdAt: Date.now()
+                                user: rec.user, empId: rec.empId, returnCode: rec.returnCode, items: selected, date: rec.date, status: 'Returned', returnDate: new Date().toISOString(), createdAt: Date.now()
                             });
                         }
                     }
-                    setSelectedItemsToReturn([]); setReturnSearchQuery(''); setActiveTab('history');
+                    setIsVerifyReturnOpen(false);
+                    setReturnVerifyCode('');
+                    setSelectedItemsToReturn([]);
+                    setReturnSearchQuery('');
+                    setActiveTab('history');
                     showToast('歸還成功');
                 } catch (err) { console.error(err); }
             };
@@ -289,21 +356,14 @@
 
             const exportCSV = () => {
                 if (filteredHistoryRecords.length === 0) return;
-                const headers = ["日期", "人員", "Socket", "狀態"];
+                const headers = ["日期", "工號", "人員", "Socket", "歸還碼", "狀態"];
                 let csv = "\uFEFF" + headers.join(",") + "\n";
-                filteredHistoryRecords.forEach(r => csv += `"${new Date(r.date).toLocaleString()}","${r.user}","${r.items.join(';')}","${r.status === 'Checked Out' ? '領用中' : '已歸還'}"\n`);
+                filteredHistoryRecords.forEach(r => csv += `"${new Date(r.date).toLocaleString()}","${r.empId || ''}","${r.user}","${r.items.join(';')}","${r.returnCode || ''}","${r.status === 'Checked Out' ? '領用中' : '已歸還'}"\n`);
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement("a");
                 link.href = url; link.download = `SOCKET_紀錄_${new Date().toLocaleDateString()}.csv`; link.click();
                 showToast('歷史紀錄已匯出');
-            };
-
-            const toggleHistorySelection = (id) => setSelectedHistoryIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-            const batchPrepareHistoryDelete = () => {
-                if (selectedHistoryIds.length === 0) return;
-                setPendingDeleteIds([...selectedHistoryIds]);
-                setIsDeleteModalOpen(true);
             };
 
             if (isPageLocked) {
@@ -324,7 +384,6 @@
                             />
                             <button onClick={handleEntry} className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xl shadow-xl active:scale-95 transition-all">進入系統</button>
                         </div>
-                        <div className="mt-12 text-xs text-slate-500 font-bold uppercase tracking-widest">Engineering Dept Only</div>
                     </div>
                 );
             }
@@ -339,7 +398,66 @@
                         </div>
                     )}
 
-                    {/* Modal：管理員驗證 */}
+                    {/* Modal：管理員視圖解鎖 */}
+                    {isAdminModalOpen && (
+                        <div className="fixed inset-0 z-[210] flex items-center justify-center p-6 bg-slate-900/90 backdrop-blur-md">
+                            <div className="bg-white rounded-[2rem] p-8 w-full max-w-xs shadow-2xl text-center space-y-6">
+                                <div className="text-blue-600 flex justify-center"><span className="icon-wrapper"><i data-lucide="eye" className="w-14 h-14"></i></span></div>
+                                <h3 className="text-xl font-black text-slate-800">解鎖完整資訊</h3>
+                                <input 
+                                    type="text" inputMode="numeric" pattern="[0-9]*" 
+                                    className={`w-full bg-slate-50 border-2 rounded-2xl py-4 text-center text-3xl font-black tracking-widest outline-none ${passwordError ? 'border-rose-500 bg-rose-50' : 'border-slate-200 focus:border-blue-600'}`} 
+                                    placeholder="管理密碼" value={adminInputPassword} 
+                                    onChange={(e) => {setAdminInputPassword(e.target.value); setPasswordError(false);}} 
+                                />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={() => {setIsAdminModalOpen(false); setAdminInputPassword('');}} className="py-3 bg-slate-100 text-slate-500 rounded-2xl font-black">取消</button>
+                                    <button onClick={handleAdminLogin} className="py-3 bg-blue-600 text-white rounded-2xl font-black shadow-lg">解鎖</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal：歸還碼驗證 */}
+                    {isVerifyReturnOpen && (
+                        <div className="fixed inset-0 z-[180] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-md">
+                            <div className="bg-white rounded-[2rem] p-8 w-full max-w-[300px] shadow-2xl text-center space-y-6 animate-in zoom-in-95 duration-200">
+                                <div className="text-blue-600 flex justify-center"><span className="icon-wrapper"><i data-lucide="shield-check" className="w-14 h-14"></i></span></div>
+                                <div className="space-y-2">
+                                    <h3 className="text-xl font-black text-slate-800">歸還碼比對</h3>
+                                    <p className="text-xs font-bold text-slate-400">請輸入領出時系統配發的 4 位數代碼</p>
+                                </div>
+                                <input 
+                                    type="text" inputMode="numeric" maxLength="4" 
+                                    className={`w-full bg-slate-50 border-2 rounded-2xl py-5 text-center text-5xl font-black tracking-[1rem] outline-none transition-all ${verifyError ? 'border-rose-500 animate-shake' : 'border-slate-200 focus:border-blue-600'}`} 
+                                    placeholder="0000" value={returnVerifyCode} 
+                                    onChange={(e) => {setReturnVerifyCode(e.target.value); setVerifyError(false);}} 
+                                />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={() => {setIsVerifyReturnOpen(false); setReturnVerifyCode('');}} className="py-4 bg-slate-100 text-slate-500 rounded-2xl font-black">取消</button>
+                                    <button onClick={executeReturnVerify} className="py-4 bg-emerald-600 text-white rounded-2xl font-black shadow-lg">確認歸還</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal：登記成功 */}
+                    {checkoutSuccessCode && (
+                        <div className="fixed inset-0 z-[190] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-md">
+                            <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-[320px] shadow-2xl text-center space-y-6 animate-in zoom-in-95">
+                                <div className="text-green-500 flex justify-center scale-125"><span className="icon-wrapper"><i data-lucide="party-popper" className="w-12 h-12"></i></span></div>
+                                <div className="space-y-3">
+                                    <h3 className="text-2xl font-black text-slate-800">登記成功！</h3>
+                                    <p className="text-sm font-bold text-slate-500 leading-relaxed">您的個人歸還驗證碼為：</p>
+                                    <div className="bg-slate-900 text-white py-6 rounded-3xl text-5xl font-black tracking-widest shadow-inner mb-2">{checkoutSuccessCode}</div>
+                                    <p className="text-xs font-black text-rose-500">⚠️ 請務必截圖或記住此號碼，<br/>否則將無法完成歸還。</p>
+                                </div>
+                                <button onClick={() => { setCheckoutSuccessCode(null); setActiveTab('in_use'); }} className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xl shadow-xl active:scale-95 transition-transform">我記住了</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal：管理員刪除驗證 */}
                     {isDeleteModalOpen && (
                         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-md">
                             <div className="bg-white rounded-[1.8rem] p-6 w-[82%] max-w-[260px] shadow-2xl space-y-5 text-center">
@@ -352,47 +470,15 @@
                                     onChange={(e) => {setDeletePassword(e.target.value); setPasswordError(false);}} 
                                 />
                                 <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={() => {setIsDeleteModalOpen(false); setDeletePassword('');}} className="py-3 bg-slate-100 text-slate-500 rounded-2xl font-black text-base">取消</button>
+                                    <button onClick={() => {setIsDeleteModalOpen(false); setDeletePassword('');}} className="py-3 bg-slate-100 text-slate-500 rounded-2xl font-black">取消</button>
                                     <button onClick={async () => {
                                         if(deletePassword === '168168') {
                                             for(const id of pendingDeleteIds) await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('records').doc(id).delete();
                                             setIsDeleteModalOpen(false); setDeletePassword(''); setSelectedHistoryIds([]); showToast('紀錄已刪除');
+                                            setIsAdminMode(true);
                                         } else setPasswordError(true);
-                                    }} className="py-3 bg-rose-600 text-white rounded-2xl font-black shadow-lg text-base">確認</button>
+                                    }} className="py-3 bg-rose-600 text-white rounded-2xl font-black shadow-lg">確認</button>
                                 </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Modal：逾期提醒 */}
-                    {showOverdueModal && (
-                        <div className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
-                            <div className="bg-white rounded-[2rem] p-6 w-[85%] max-w-[280px] shadow-2xl text-center space-y-4">
-                                <div className="text-rose-500 flex justify-center">
-                                    <div className="relative">
-                                        <span className="icon-wrapper"><i data-lucide="home" className="w-12 h-12 opacity-10"></i></span>
-                                        <span className="icon-wrapper absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"><i data-lucide="heart" className="w-9 h-9 text-rose-500 fill-rose-500"></i></span>
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    <h3 className="text-xl font-black text-slate-800 tracking-tight">溫馨提醒</h3>
-                                    <p className="text-lg font-black text-slate-600 leading-snug">嗨 {formData.user}，您的 Socket 流浪太久了，<br/><span className="text-rose-600 font-black underline decoration-2 decoration-rose-200">記得歸還</span>喔！</p>
-                                </div>
-                                <div className="flex flex-col gap-2 pt-2">
-                                    <button onClick={() => { setShowOverdueModal(false); setActiveTab('return'); setReturnSearchQuery(formData.user.toUpperCase()); }} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black shadow-lg text-xl active:scale-95 transition-transform">好，先去歸還</button>
-                                    <button onClick={executeCheckout} className="text-slate-400 font-bold text-xs underline decoration-dotted py-2">仍要領用</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {showScanner && (
-                        <div className="fixed inset-0 z-[150] bg-black flex flex-col items-center justify-center p-6">
-                            <div className="w-full max-w-sm relative text-center">
-                                <button onClick={stopScanner} className="absolute -top-16 right-0 text-white p-4 bg-white/10 rounded-full">
-                                    <span className="icon-wrapper"><i data-lucide="x" className="w-9 h-9"></i></span>
-                                </button>
-                                <div id="reader" className="w-full rounded-3xl overflow-hidden border-4 border-blue-500 shadow-2xl bg-slate-900"></div>
                             </div>
                         </div>
                     )}
@@ -420,8 +506,16 @@
                         {activeTab === 'checkout' && (
                             <div className="space-y-4 animate-in fade-in duration-300">
                                 <div className="bg-white p-5 sm:p-7 rounded-[2.5rem] shadow-sm border border-slate-200">
-                                    <label className="text-slate-400 font-black text-xs uppercase mb-3 block tracking-widest text-center">領用人姓名</label>
-                                    <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-5 text-xl font-bold outline-none focus:border-blue-600 mb-8" placeholder="輸入姓名" value={formData.user} onChange={(e) => setFormData({...formData, user: e.target.value})} />
+                                    <div className="grid grid-cols-2 gap-4 mb-8">
+                                        <div className="space-y-2">
+                                            <label className="text-slate-400 font-black text-xs uppercase tracking-widest text-center block">領用人姓名</label>
+                                            <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-4 text-lg font-bold outline-none focus:border-blue-600 uppercase" placeholder="姓名" value={formData.user} onChange={(e) => setFormData({...formData, user: e.target.value.toUpperCase()})} />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-slate-400 font-black text-xs uppercase tracking-widest text-center block">工號</label>
+                                            <input type="text" inputMode="numeric" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-4 text-lg font-bold outline-none focus:border-blue-600 uppercase" placeholder="7位數工號" value={formData.empId} onChange={(e) => setFormData({...formData, empId: e.target.value.toUpperCase()})} />
+                                        </div>
+                                    </div>
                                     
                                     <div className="flex justify-between items-center mb-4 px-1">
                                         <label className="text-slate-400 font-black text-xs uppercase tracking-widest">領用編號輸入</label>
@@ -429,9 +523,7 @@
                                             <span className="icon-wrapper"><i data-lucide="qr-code" className="w-5 h-5"></i></span> 掃描
                                         </button>
                                     </div>
-                                    <div className="h-7 mb-1">
-                                        {inputError && <p className="text-rose-500 text-xs font-black flex items-center gap-1.5 animate-pulse"><span className="icon-wrapper"><i data-lucide="alert-triangle" className="w-4 h-4"></i></span> {inputError}</p>}
-                                    </div>
+                                    <div className="h-7 mb-1">{inputError && <p className="text-rose-500 text-xs font-black flex items-center gap-1.5 animate-pulse"><span className="icon-wrapper"><i data-lucide="alert-triangle" className="w-4 h-4"></i></span> {inputError}</p>}</div>
                                     
                                     <div className="flex items-center gap-3 mb-8 px-1 overflow-hidden">
                                         <input type="text" className={`flex-1 min-w-0 bg-slate-50 border-2 rounded-2xl px-5 py-4 text-base font-bold outline-none transition-all uppercase ${inputError ? 'border-rose-500 bg-rose-50' : 'border-slate-100 focus:border-blue-600'}`} placeholder="手動輸入" value={formData.itemInput} onChange={(e) => {setFormData({...formData, itemInput: e.target.value.toUpperCase()}); setInputError('');}} onKeyPress={(e) => e.key === 'Enter' && addSocketToTemp(formData.itemInput)} />
@@ -443,21 +535,19 @@
                                     </div>
 
                                     <div className="space-y-3 mb-8 min-h-[120px] max-h-[350px] overflow-y-auto no-scrollbar border-y border-slate-50 py-3">
-                                        {tempItems.map((item, i) => {
-                                            return (
-                                                <div key={item + i} className="flex justify-between items-center px-5 py-4 rounded-2xl border bg-blue-50/50 border-blue-100 transition-all">
-                                                    <div className="flex items-center gap-3 flex-1">
-                                                        <span className="font-mono font-black text-lg uppercase text-blue-900">{item}</span>
-                                                    </div>
-                                                    <button onClick={() => setTempItems(prev => prev.filter((_, idx) => idx !== i))} className="text-rose-400 p-2 active:scale-90 ml-2">
-                                                        <span className="icon-wrapper"><i data-lucide="trash-2" className="w-6 h-6"></i></span>
-                                                    </button>
+                                        {tempItems.map((item, i) => (
+                                            <div key={item + i} className="flex justify-between items-center px-5 py-4 rounded-2xl border bg-blue-50/50 border-blue-100 transition-all">
+                                                <div className="flex items-center gap-3 flex-1">
+                                                    <span className="font-mono font-black text-lg uppercase text-blue-900">{item}</span>
                                                 </div>
-                                            );
-                                        })}
+                                                <button onClick={() => setTempItems(prev => prev.filter((_, idx) => idx !== i))} className="text-rose-400 p-2 active:scale-90 ml-2">
+                                                    <span className="icon-wrapper"><i data-lucide="trash-2" className="w-6 h-6"></i></span>
+                                                </button>
+                                            </div>
+                                        ))}
                                         {tempItems.length === 0 && <div className="py-12 text-center text-slate-300 font-black italic border-2 border-dashed border-slate-100 rounded-2xl text-sm">目前清單為空</div>}
                                     </div>
-                                    <button disabled={tempItems.length === 0 || !formData.user} onClick={handleCheckoutClick} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black text-xl shadow-xl active:scale-[0.98] disabled:bg-slate-100 disabled:text-slate-300 flex items-center justify-center gap-3 transition-all">
+                                    <button disabled={tempItems.length === 0 || !formData.user || !formData.empId} onClick={handleCheckoutClick} className="w-full py-6 bg-blue-600 text-white rounded-[2rem] font-black text-xl shadow-xl active:scale-[0.98] disabled:bg-slate-100 disabled:text-slate-300 flex items-center justify-center gap-3 transition-all">
                                         <span className="icon-wrapper"><i data-lucide="check-circle-2" className="w-7 h-7"></i></span> 確認登記領出
                                     </button>
                                 </div>
@@ -468,29 +558,26 @@
                             <div className="space-y-4 animate-in fade-in duration-300 pb-10">
                                 <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border-t-8 border-emerald-500 border border-slate-200">
                                     <div className="flex flex-col gap-4 mb-6">
-                                        {/* 修正：實現來回彈跳模式的跑馬燈提醒語區域 */}
                                         <div className="marquee-box bg-rose-50 rounded-xl py-2.5 border border-rose-100">
                                             <div className="marquee-text text-[12px] font-black text-rose-600">
                                                 ⚠️ 溫馨提醒：歸還請務必放置於歸還箱，感謝您的配合～
                                             </div>
                                         </div>
-                                        
                                         <div className="flex justify-end gap-2 shrink-0">
                                             <button onClick={() => startScanner('return')} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl shadow-lg text-sm font-black flex items-center gap-1.5 active:scale-95 transition-all">
                                                 <span className="icon-wrapper"><i data-lucide="qr-code" className="w-5 h-5"></i></span> 掃描
                                             </button>
-                                            <button disabled={selectedItemsToReturn.length === 0} onClick={executeReturn} className={`px-5 py-2.5 rounded-xl font-black text-sm shadow-lg flex items-center gap-2 transition-all active:scale-95 ${selectedItemsToReturn.length > 0 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-300'}`}>
+                                            <button disabled={selectedItemsToReturn.length === 0} onClick={handleReturnClick} className={`px-5 py-2.5 rounded-xl font-black text-sm shadow-lg flex items-center gap-2 transition-all active:scale-95 ${selectedItemsToReturn.length > 0 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-300'}`}>
                                                 <span className="icon-wrapper"><i data-lucide="package-check" className="w-5 h-5"></i></span> 執行歸還 ({selectedItemsToReturn.length})
                                             </button>
                                         </div>
                                     </div>
-                                    
                                     <div className="relative mb-6">
                                         <span className="icon-wrapper absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"><i data-lucide="search" className="w-5 h-5"></i></span>
-                                        <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-5 text-base font-bold outline-none focus:border-emerald-600 transition-all uppercase" placeholder="搜尋人名或編號..." value={returnSearchQuery} onChange={(e) => setReturnSearchQuery(e.target.value.toUpperCase())} />
+                                        <input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-5 text-base font-bold outline-none focus:border-emerald-600 transition-all uppercase" placeholder="搜尋人名、編號或工號..." value={returnSearchQuery} onChange={(e) => setReturnSearchQuery(e.target.value.toUpperCase())} />
                                     </div>
                                     <div className="space-y-4 min-h-[200px] no-scrollbar">
-                                        {activeRecords.filter(r => (r.user.toUpperCase().includes(returnSearchQuery) || r.items.some(i => i.toUpperCase().includes(returnSearchQuery)))).sort((a,b) => (isOverdue(a.date) && !isOverdue(b.date) ? -1 : !isOverdue(a.date) && isOverdue(b.date) ? 1 : new Date(b.date)-new Date(a.date))).map(rec => {
+                                        {activeRecords.filter(r => (r.user.toUpperCase().includes(returnSearchQuery) || (r.empId || '').toUpperCase().includes(returnSearchQuery) || r.items.some(i => i.toUpperCase().includes(returnSearchQuery)))).sort((a,b) => (isOverdue(a.date) && !isOverdue(b.date) ? -1 : !isOverdue(a.date) && isOverdue(b.date) ? 1 : new Date(b.date)-new Date(a.date))).map(rec => {
                                             const overdue = isOverdue(rec.date);
                                             return (
                                                 <div key={rec.id} className={`rounded-[2rem] border-2 p-5 bg-white shadow-sm transition-all ${overdue ? 'border-rose-100' : 'border-slate-100'}`}>
@@ -540,6 +627,7 @@
                                             <div className="flex justify-between items-center mb-5">
                                                 <div className="flex items-center gap-2.5">
                                                     <span className={`px-5 py-1.5 rounded-xl font-black text-base ${overdue ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{rec.user}</span>
+                                                    {rec.empId && <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-1 rounded-lg uppercase tracking-tighter">工號：{isAdminMode ? rec.empId : maskEmpId(rec.empId)}</span>}
                                                     <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg ${overdue ? 'bg-rose-500 text-white animate-pulse' : 'bg-blue-500 text-white'}`}>{overdue ? '逾期' : '工作中'}</span>
                                                 </div>
                                                 {overdue && <span className="icon-wrapper"><i data-lucide="alert-triangle" className="text-rose-600"></i></span>}
@@ -551,9 +639,6 @@
                                                     <div className="flex items-center gap-1.5 font-bold ml-5">已領用 {daysUsed} 天</div>
                                                 </div>
                                                 <div className="flex gap-2.5">
-                                                    {overdue && <button onClick={() => { const text = `嗨 ${rec.user}，溫馨提醒您領用的 Socket 編號 (${rec.items.join(', ')}) 已經在外面借出約 ${daysUsed} 天了，若工程已結束，記得歸還喔！辛苦了，謝謝！`; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); showToast('提醒文字已複製'); }} className="bg-amber-100 text-amber-700 px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 active:bg-amber-200 border border-amber-200 shadow-sm">
-                                                        <span className="icon-wrapper"><i data-lucide="send" className="w-4 h-4"></i></span> 溫馨提醒
-                                                    </button>}
                                                     <button onClick={() => { setActiveTab('return'); setReturnSearchQuery(rec.user.toUpperCase()); }} className="bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 uppercase shadow-md active:bg-slate-700">前往歸還</button>
                                                 </div>
                                             </div>
@@ -568,7 +653,7 @@
                                 <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-200 space-y-5">
                                     <div className="relative">
                                         <span className="icon-wrapper absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"><i data-lucide="search" className="w-5 h-5"></i></span>
-                                        <input type="text" className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-slate-100 outline-none focus:border-blue-500 font-bold text-base shadow-inner transition-all uppercase" placeholder="搜尋姓名或編號..." value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value.toUpperCase())} />
+                                        <input type="text" className="w-full pl-12 pr-4 py-4 rounded-2xl border-2 border-slate-100 outline-none focus:border-blue-500 font-bold text-base shadow-inner transition-all uppercase" placeholder="搜尋姓名、工號或編號..." value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value.toUpperCase())} />
                                     </div>
                                     <div className="space-y-4">
                                         <div className="flex flex-col gap-3">
@@ -622,7 +707,8 @@
                                                         <div className="flex justify-between items-start">
                                                             <div onClick={() => toggleHistorySelection(rec.id)} className="flex-1">
                                                                 <h4 className="font-black text-base text-slate-800">{rec.user}</h4>
-                                                                <p className="text-[11px] text-slate-400 mt-1.5 uppercase font-bold">{rec.status === 'Checked Out' ? '領用於' : '歸還於'} {new Date(rec.returnDate || rec.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                                                                {rec.empId && <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">工號：{isAdminMode ? rec.empId : maskEmpId(rec.empId)}</p>}
+                                                                <p className="text-[11px] text-slate-400 mt-0.5 uppercase font-bold">{rec.status === 'Checked Out' ? '領用於' : '歸還於'} {new Date(rec.returnDate || rec.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
                                                             </div>
                                                             <div className="flex items-center gap-2.5">
                                                                 <span className={`text-[10px] font-black px-3 py-1 rounded-full ${rec.status === 'Checked Out' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>{rec.status === 'Checked Out' ? '領用中' : '已歸還'}</span>
@@ -632,6 +718,7 @@
                                                             </div>
                                                         </div>
                                                         <div className="mt-4 flex flex-wrap gap-2" onClick={() => toggleHistorySelection(rec.id)}>{rec.items.map(i => <span key={i} className="text-xs font-mono font-bold text-slate-500 bg-slate-50 px-3 py-1 border border-slate-100 rounded-lg uppercase">{i}</span>)}</div>
+                                                        {rec.returnCode && rec.status === 'Checked Out' && <div className="mt-3 text-[10px] font-black text-slate-300 border-t border-slate-50 pt-2 uppercase tracking-widest">歸還驗證碼：{rec.returnCode}</div>}
                                                     </div>
                                                 </div>
                                             );
@@ -642,13 +729,23 @@
                         )}
                     </main>
 
-                    <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/95 border-t border-slate-200 px-6 py-5 flex justify-between items-center z-30 shadow-2xl backdrop-blur-md">
-                        <div className="flex space-x-6 sm:space-x-8">
-                            <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase tracking-tighter leading-tight">借出總數</span><span className="text-xl font-black text-slate-700 leading-none">{totalItemsLent}</span></div>
-                            <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase tracking-tighter leading-tight text-rose-600">逾期數量</span><span className={`text-xl font-black leading-none ${overdueItemsCount > 0 ? 'text-rose-600' : 'text-slate-700'}`}>{overdueItemsCount}</span></div>
-                            <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase tracking-tighter leading-tight text-blue-700">使用人員</span><span className="text-xl font-black text-blue-700 leading-none">{usagePeopleCount}</span></div>
+                    <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/95 border-t border-slate-200 px-6 py-5 flex flex-col z-30 shadow-2xl backdrop-blur-md">
+                        <div className="flex justify-between items-center mb-1">
+                            <div className="flex space-x-6 sm:space-x-8">
+                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase leading-tight">借出總數</span><span className="text-xl font-black text-slate-700 leading-none">{totalItemsLent}</span></div>
+                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase leading-tight text-rose-600">逾期數量</span><span className={`text-xl font-black leading-none ${overdueItemsCount > 0 ? 'text-rose-600' : 'text-slate-700'}`}>{overdueItemsCount}</span></div>
+                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-black uppercase leading-tight text-blue-700">使用人員</span><span className="text-xl font-black text-blue-700 leading-none">{usagePeopleCount}</span></div>
+                            </div>
+                            <div className="text-[9px] font-black text-slate-300 italic tracking-tighter uppercase text-right leading-tight">Socket<br/>V13.4 Final</div>
                         </div>
-                        <div className="text-[9px] font-black text-slate-300 italic tracking-tighter uppercase text-right leading-tight">Socket<br/>V12.5 Final</div>
+                        <div className="pt-2 border-t border-slate-50 flex justify-end">
+                            <button 
+                                onClick={() => isAdminMode ? setIsAdminMode(false) : setIsAdminModalOpen(true)}
+                                className={`text-[9px] font-black px-3 py-1 rounded-full border transition-all ${isAdminMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-400 border-slate-200'}`}
+                            >
+                                {isAdminMode ? "🔒 鎖定管理員視圖" : "🔑 解鎖管理員視圖"}
+                            </button>
+                        </div>
                     </footer>
                 </div>
             );
